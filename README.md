@@ -1,98 +1,98 @@
 <p align="center">
-  <img src="docs/images/app-icon.png" width="128" alt="AI reactor icon">
+  <img src="docs/images/app-icon.png" width="128" alt="AI reactor 아이콘">
 </p>
 
 <h1 align="center">AI reactor</h1>
 
 <p align="center">
-  How much of your <b>Claude</b> and <b>Codex</b> limits is left — as two small gauges in the macOS menu bar.
+  macOS 메뉴 막대의 작은 게이지 두 개로 <b>Claude</b>와 <b>Codex</b>의 남은 사용 한도를 확인하세요.
 </p>
 
 <p align="center">
-  <img src="docs/images/menubar.png" width="240" alt="Menu bar: Claude and Codex gauges">
+  <img src="docs/images/menubar.png" width="240" alt="메뉴 막대의 Claude 및 Codex 게이지">
 </p>
 
-- **One gauge per agent.** The arc shows how much of your **current session** is left; the logo in the middle says which agent it is.
-- **Click for details.** The popover shows every limit window (5-hour, weekly, monthly), when each resets, your account, and your plan.
-- **Stays out of the way.** Menu bar only — no Dock icon. It checks every 3 minutes in the background and every 30 seconds while the popover is open.
-- **Local only.** Nothing is sent anywhere except the one request Claude Code itself uses to show `/usage`. No telemetry, no server.
+- **에이전트별 게이지.** 원호는 **현재 세션**의 남은 한도를 나타내고, 가운데 로고는 어떤 에이전트인지 보여줍니다.
+- **클릭해서 상세 정보 확인.** 팝오버에서 모든 한도 구간(5시간, 주간, 월간), 각 한도의 초기화 시각, 계정과 요금제를 확인할 수 있습니다.
+- **방해 없이 동작.** Dock 아이콘 없이 메뉴 막대에서만 실행됩니다. 백그라운드에서는 3분마다, 팝오버가 열려 있을 때는 30초마다 확인합니다.
+- **로컬에서만 동작.** Claude Code가 `/usage`를 표시할 때 사용하는 요청 외에는 어떤 정보도 외부로 보내지 않습니다. 원격 측정이나 별도 서버도 없습니다.
 
-> AI reactor is an unofficial, non-commercial project. It is not affiliated with or endorsed by Anthropic or OpenAI. "Claude" and "ChatGPT/Codex" and their logos belong to their owners and are used here only to show which service a gauge refers to.
+> AI reactor는 비공식·비상업 프로젝트입니다. Anthropic 또는 OpenAI와 제휴 관계가 없으며 이들로부터 보증이나 승인을 받지 않았습니다. "Claude", "ChatGPT/Codex" 및 관련 로고의 권리는 각 소유자에게 있으며, 여기서는 게이지가 어떤 서비스를 나타내는지 표시하기 위한 용도로만 사용합니다.
 
-## Requirements
+## 요구 사항
 
-- macOS 13 or later (Apple Silicon or Intel)
-- **Claude:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and logged in with a Claude subscription (`claude` → `/login`)
-- **Codex:** the [Codex CLI](https://github.com/openai/codex), used at least once — the gauge reads its local session logs
+- macOS 13 이상(Apple Silicon 및 Intel 지원)
+- **Claude:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code)가 설치되어 있고 Claude 구독 계정으로 로그인되어 있어야 합니다(`claude` → `/login`).
+- **Codex:** [Codex CLI](https://github.com/openai/codex)를 한 번 이상 사용해야 합니다. 게이지는 로컬 세션 로그를 읽습니다.
 
-You can use either one alone; the other gauge simply does not appear.
+Claude나 Codex 중 하나만 사용해도 됩니다. 사용하지 않는 서비스의 게이지는 표시되지 않습니다.
 
-## Install
+## 설치
 
-1. Download `AI.reactor_x.y.z_universal.dmg` from [**Releases**](https://github.com/jen454/AI-reactor/releases/latest).
-2. Open it and drag **AI reactor** into **Applications**.
-3. Open **AI reactor** from Applications. macOS will block it the first time, because the app is not signed with a paid Apple Developer ID:
-   - Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about AI reactor. (On recent macOS, right-click → Open no longer works for this.)
-   - Or, in Terminal:
+1. [**Releases**](https://github.com/jen454/AI-reactor/releases/latest)에서 `AI.reactor_x.y.z_universal.dmg`를 다운로드합니다.
+2. 파일을 열고 **AI reactor**를 **응용 프로그램** 폴더로 드래그합니다.
+3. 응용 프로그램에서 **AI reactor**를 실행합니다. 앱이 유료 Apple Developer ID로 서명되지 않았기 때문에 macOS가 처음 실행을 차단합니다.
+   - **시스템 설정 → 개인정보 보호 및 보안**으로 이동한 다음, 아래로 스크롤하여 AI reactor 관련 메시지 옆의 **그래도 열기**를 누릅니다. 최근 macOS에서는 우클릭 후 **열기** 방식이 더 이상 동작하지 않습니다.
+   - 또는 터미널에서 다음 명령을 실행합니다.
      ```sh
      xattr -dr com.apple.quarantine "/Applications/AI reactor.app"
      ```
 
-### Verify your download
+### 다운로드 파일 확인
 
-**Only download AI reactor from this repository's [Releases](https://github.com/jen454/AI-reactor/releases) page.** You are about to give it access to your Claude login, and because it isn't signed with an Apple Developer ID, macOS can't tell you who built it — so check it yourself:
+**AI reactor는 반드시 이 저장소의 [Releases](https://github.com/jen454/AI-reactor/releases) 페이지에서만 다운로드하세요.** 이 앱에는 Claude 로그인 정보에 접근할 권한을 부여하게 됩니다. 또한 Apple Developer ID로 서명되지 않았기 때문에 macOS만으로는 누가 앱을 만들었는지 확인할 수 없습니다. 따라서 직접 검증하는 것이 좋습니다.
 
 ```sh
-# Built by this repository's GitHub Actions, from this repository's source?
+# 이 저장소의 소스 코드로 GitHub Actions에서 빌드됐는지 확인
 gh attestation verify "AI.reactor_0.1.0_universal.dmg" -R jen454/AI-reactor
 
-# Or compare against SHA256SUMS.txt from the same release
+# 또는 같은 릴리스의 SHA256SUMS.txt와 해시 비교
 shasum -a 256 "AI.reactor_0.1.0_universal.dmg"
 ```
 
-## First run
+## 최초 실행
 
-A gauge appears in the menu bar, and macOS asks:
+메뉴 막대에 게이지가 나타나며 macOS에서 다음과 같은 메시지를 표시합니다.
 
-> **"AI reactor" wants to use your confidential information stored in "Claude Code-credentials" in your keychain.**
+> **“AI reactor”가 키체인의 “Claude Code-credentials”에 저장된 기밀 정보를 사용하려고 합니다.**
 
-Click **Always Allow**. That's it — from then on it tracks automatically.
+**항상 허용**을 선택하면 이후부터 자동으로 사용량을 추적합니다.
 
-- **Allow** (without "Always") only lasts until the app restarts, so you would be asked again.
-- If you click **Deny**, the Claude card says so, and the app asks again a little later.
-- **After each update** macOS asks once more. It remembers unsigned apps by their exact build, so every new version is "new" to it. Click **Always Allow** again.
-- Codex needs no permission.
+- **항상 허용**이 아닌 일반 **허용**을 누르면 앱이 재시작될 때까지만 유효하므로 다음 실행 때 다시 묻습니다.
+- **거부**를 누르면 Claude 카드에 해당 상태가 표시되고 잠시 후 다시 권한을 요청합니다.
+- **앱을 업데이트할 때마다** macOS가 다시 한 번 권한을 묻습니다. 서명되지 않은 앱은 정확한 빌드를 기준으로 기억하므로 새 버전은 매번 새로운 앱으로 인식합니다. 이때 다시 **항상 허용**을 누르면 됩니다.
+- Codex에는 별도의 접근 권한이 필요하지 않습니다.
 
-Optional: right-click the menu bar icon → **로그인 시 자동 실행** (launch at login) so tracking survives a restart.
+선택 사항으로 메뉴 막대 아이콘을 우클릭하고 **로그인 시 자동 실행**을 선택하면 Mac을 재시작한 후에도 자동으로 추적을 계속합니다.
 
-## What it reads
+## 앱이 읽는 정보
 
-| What | Where | Why |
+| 읽는 정보 | 위치 | 사용 목적 |
 |---|---|---|
-| Claude Code's login token | Keychain item `Claude Code-credentials`, or `~/.claude/.credentials.json` if there is no keychain item (read only) | To ask Anthropic for your usage, the same request `claude` makes for `/usage` |
-| Your Claude account email and plan | `~/.claude.json` → `oauthAccount` (read only) | Shown in the popover |
-| Codex limits and plan | `~/.codex/sessions/**/rollout-*.jsonl` (read only) | Codex writes its limits into these logs; no network needed |
+| Claude Code 로그인 토큰 | 키체인의 `Claude Code-credentials` 항목. 키체인 항목이 없으면 `~/.claude/.credentials.json`을 읽기 전용으로 사용 | Claude CLI의 `/usage`와 동일한 방식으로 Anthropic에 사용량 조회 요청 |
+| Claude 계정 이메일과 요금제 | `~/.claude.json`의 `oauthAccount`를 읽기 전용으로 사용 | 팝오버에 계정 정보 표시 |
+| Codex 한도와 요금제 | `~/.codex/sessions/**/rollout-*.jsonl`을 읽기 전용으로 사용 | Codex가 로그에 기록한 한도 정보를 표시하며 네트워크 요청은 필요하지 않음 |
 
-And what it never does:
+앱이 절대로 하지 않는 일:
 
-- **Never refreshes or modifies your tokens.** The token belongs to `claude`; refreshing it from here would log the CLI out. When it expires, the card asks you to run `claude` once.
-- **Never writes** to `~/.claude` or `~/.codex`.
-- **Never reads** `~/.codex/auth.json`. That's why the Codex card shows your plan but not your email.
-- Keeps the token in memory only — never in a file or a log.
+- **토큰을 갱신하거나 수정하지 않습니다.** 토큰은 `claude` CLI의 소유입니다. 이 앱에서 토큰을 갱신하면 CLI가 로그아웃될 수 있습니다. 토큰이 만료되면 카드에서 `claude`를 한 번 실행하라고 안내합니다.
+- `~/.claude` 또는 `~/.codex`에 **파일을 쓰지 않습니다.**
+- `~/.codex/auth.json`을 **읽지 않습니다.** 이 때문에 Codex 카드에는 요금제는 표시되지만 이메일은 표시되지 않습니다.
+- 토큰은 메모리에만 보관하며 파일이나 로그에 저장하지 않습니다.
 
-The only network request is `GET https://api.anthropic.com/api/oauth/usage`.
+발생하는 유일한 네트워크 요청은 `GET https://api.anthropic.com/api/oauth/usage`입니다.
 
-## Good to know
+## 알아둘 점
 
-- **Use at your own risk.** AI reactor reuses the login Claude Code already stored on your Mac to read your usage — the same read-only request Claude Code makes for `/usage`. That is not an officially supported way to use that login, so review [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms) and decide for yourself. This project comes with no warranty (see [LICENSE](LICENSE)).
-- The Claude usage endpoint is **undocumented**. It is what Claude Code itself uses, but it can change without notice; if it does, the Claude card shows the last known numbers as stale until the app is updated.
-- Codex numbers come from the Codex CLI's logs, so they update when you use the CLI. The IDE extension doesn't write these logs.
-- The menu bar gauge always shows the **current session** (the shortest window). Exact percentages, weekly and monthly limits are in the popover.
+- **사용에 따른 책임은 사용자에게 있습니다.** AI reactor는 Claude Code가 Mac에 저장한 로그인을 재사용하여 사용량을 조회합니다. Claude Code의 `/usage`와 동일한 읽기 전용 요청이지만, 다른 앱에서 이 로그인 정보를 사용하는 것은 공식적으로 지원되는 방식이 아닙니다. [Anthropic 이용 약관](https://www.anthropic.com/legal/consumer-terms)을 검토한 후 사용할지 직접 결정하세요. 이 프로젝트에는 어떠한 보증도 제공되지 않습니다([LICENSE](LICENSE) 참고).
+- Claude 사용량 API는 **공식 문서에 공개되지 않은 엔드포인트**입니다. Claude Code 자체에서 사용하는 엔드포인트지만 예고 없이 변경될 수 있습니다. 변경되면 앱이 업데이트될 때까지 Claude 카드에 마지막으로 확인한 수치가 오래된 정보로 표시됩니다.
+- Codex 수치는 Codex CLI 로그에서 가져오므로 CLI를 사용할 때 갱신됩니다. IDE 확장 프로그램은 해당 로그를 기록하지 않습니다.
+- 메뉴 막대 게이지는 항상 가장 짧은 기간인 **현재 세션 한도**를 표시합니다. 정확한 백분율과 주간·월간 한도는 팝오버에서 확인할 수 있습니다.
 
-## Build from source
+## 소스 코드로 빌드하기
 
 ```sh
-# Prerequisites: Rust (rustup), Node 22+, pnpm
+# 사전 준비: Rust(rustup), Node.js 22 이상, pnpm
 git clone https://github.com/jen454/AI-reactor.git
 cd AI-reactor
 pnpm install
@@ -100,24 +100,16 @@ pnpm tauri build --bundles app
 open "src-tauri/target/release/bundle/macos/AI reactor.app"
 ```
 
-The build is ad-hoc signed, so the keychain prompt returns after every rebuild. For a stable local signing identity, run `scripts/setup-dev-cert.sh` once, then use `scripts/rebuild-and-run.sh`.
+빌드는 임시 방식으로 서명되므로 다시 빌드할 때마다 키체인 권한 요청이 나타납니다. 안정적인 로컬 서명 인증서를 사용하려면 `scripts/setup-dev-cert.sh`를 한 번 실행한 다음 `scripts/rebuild-and-run.sh`를 사용하세요.
 
-Tests: `cd src-tauri && cargo test`
+테스트 실행:
 
-Design notes and the history of decisions (in Korean): [`docs/SPEC.md`](docs/SPEC.md), [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+```sh
+cd src-tauri && cargo test
+```
 
-## 한국어 요약
+설계 참고 사항과 의사 결정 기록은 한국어로 작성된 [`docs/SPEC.md`](docs/SPEC.md)와 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)에서 확인할 수 있습니다.
 
-메뉴바에서 Claude와 Codex의 **현재 세션 남은 한도**를 게이지로 보여주는 앱입니다.
-
-1. [Releases](https://github.com/jen454/AI-reactor/releases/latest)에서 DMG를 받아 응용 프로그램 폴더로 옮깁니다.
-2. 처음 열 때 막히면 **시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기"**를 누릅니다.
-3. 키체인 창이 뜨면 **"항상 허용"**을 누릅니다. 이후엔 자동으로 추적됩니다. (새 버전을 설치하면 한 번 더 물어봅니다.)
-
-**이 저장소의 Releases에서만 받으세요.** Claude 로그인 접근 권한을 주는 앱이라, 받은 파일이 이 저장소 코드로 빌드된 게 맞는지 위의 *Verify your download* 명령으로 확인할 수 있습니다. Claude Code의 로그인을 다른 앱에서 쓰는 건 공식 지원 방식이 아니므로, 사용 여부는 본인 판단에 맡깁니다.
-
-토큰은 읽기만 하고 갱신·저장하지 않으며, Anthropic 사용량 조회 외에는 어떤 네트워크 요청도 하지 않습니다. Anthropic·OpenAI와 무관한 비공식·비상업 프로젝트입니다.
-
-## License
+## 라이선스
 
 [MIT](LICENSE)
