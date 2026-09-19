@@ -38,6 +38,18 @@ You can use either one alone; the other gauge simply does not appear.
      xattr -dr com.apple.quarantine "/Applications/AI reactor.app"
      ```
 
+### Verify your download
+
+**Only download AI reactor from this repository's [Releases](https://github.com/jen454/AI-reactor/releases) page.** You are about to give it access to your Claude login, and because it isn't signed with an Apple Developer ID, macOS can't tell you who built it — so check it yourself:
+
+```sh
+# Built by this repository's GitHub Actions, from this repository's source?
+gh attestation verify "AI.reactor_0.1.0_universal.dmg" -R jen454/AI-reactor
+
+# Or compare against SHA256SUMS.txt from the same release
+shasum -a 256 "AI.reactor_0.1.0_universal.dmg"
+```
+
 ## First run
 
 A gauge appears in the menu bar, and macOS asks:
@@ -72,6 +84,7 @@ The only network request is `GET https://api.anthropic.com/api/oauth/usage`.
 
 ## Good to know
 
+- **Use at your own risk.** AI reactor reuses the login Claude Code already stored on your Mac to read your usage — the same read-only request Claude Code makes for `/usage`. That is not an officially supported way to use that login, so review [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms) and decide for yourself. This project comes with no warranty (see [LICENSE](LICENSE)).
 - The Claude usage endpoint is **undocumented**. It is what Claude Code itself uses, but it can change without notice; if it does, the Claude card shows the last known numbers as stale until the app is updated.
 - Codex numbers come from the Codex CLI's logs, so they update when you use the CLI. The IDE extension doesn't write these logs.
 - The menu bar gauge always shows the **current session** (the shortest window). Exact percentages, weekly and monthly limits are in the popover.
@@ -100,6 +113,8 @@ Design notes and the history of decisions (in Korean): [`docs/SPEC.md`](docs/SPE
 1. [Releases](https://github.com/jen454/AI-reactor/releases/latest)에서 DMG를 받아 응용 프로그램 폴더로 옮깁니다.
 2. 처음 열 때 막히면 **시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기"**를 누릅니다.
 3. 키체인 창이 뜨면 **"항상 허용"**을 누릅니다. 이후엔 자동으로 추적됩니다. (새 버전을 설치하면 한 번 더 물어봅니다.)
+
+**이 저장소의 Releases에서만 받으세요.** Claude 로그인 접근 권한을 주는 앱이라, 받은 파일이 이 저장소 코드로 빌드된 게 맞는지 위의 *Verify your download* 명령으로 확인할 수 있습니다. Claude Code의 로그인을 다른 앱에서 쓰는 건 공식 지원 방식이 아니므로, 사용 여부는 본인 판단에 맡깁니다.
 
 토큰은 읽기만 하고 갱신·저장하지 않으며, Anthropic 사용량 조회 외에는 어떤 네트워크 요청도 하지 않습니다. Anthropic·OpenAI와 무관한 비공식·비상업 프로젝트입니다.
 

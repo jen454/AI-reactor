@@ -3,6 +3,15 @@
 #
 # Builds are ad-hoc signed (no Apple Developer ID), so users open the app once
 # via System Settings → Privacy & Security → "Open Anyway". See README.
+#
+# Because an unsigned app can't prove who built it, this job also publishes
+# SHA256SUMS.txt and a GitHub build-provenance attestation for the DMG, so
+# anyone can check it came from this repository's source:
+#   gh attestation verify "AI.reactor_<version>_universal.dmg" -R jen454/AI-reactor
+#
+# Every third-party action is pinned to a commit SHA, not a tag: a moved or
+# hijacked tag could otherwise inject code into a release that users then
+# grant keychain access to. Bump them deliberately (the comment is the tag).
 name: Release
 
 on:
@@ -12,25 +21,28 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: "./src-tauri -> target"
 
@@ -42,7 +54,8 @@ jobs:
           pnpm build
           cargo test --manifest-path src-tauri/Cargo.toml
 
-      - uses: tauri-apps/tauri-action@v0
+      - id: tauri
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -56,7 +69,33 @@ jobs:
 
             Updating from an earlier version? macOS will ask for keychain access once more — click **Always Allow** again.
 
+            **Only download from this page.** To check the DMG was built from this repository:
+            compare it with `SHA256SUMS.txt`, or run
+            `gh attestation verify <file>.dmg -R jen454/AI-reactor`.
+
             Full instructions: https://github.com/jen454/AI-reactor#install
           releaseDraft: true
           prerelease: false
           args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Checksums
+        id: sums
+        run: |
+          cd src-tauri/target/universal-apple-darwin/release/bundle/dmg
+          shasum -a 256 *.dmg | tee SHA256SUMS.txt
+          echo "dir=$PWD" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: ${{ steps.sums.outputs.dir }}/*.dmg
+
+      # The release is still a draft, which the get-release-by-tag API can't
+      # see, so upload by the id tauri-action returned.
+      - name: Attach checksums to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST \
+            -H "Content-Type: text/plain" \
+            "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.tauri.outputs.releaseId }}/assets?name=SHA256SUMS.txt" \
+            --input "${{ steps.sums.outputs.dir }}/SHA256SUMS.txt"
