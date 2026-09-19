@@ -1,0 +1,62 @@
+# Push a tag like v0.1.0 to build a universal (Apple Silicon + Intel) DMG and
+# attach it to a *draft* GitHub Release. Review the draft, then press Publish.
+#
+# Builds are ad-hoc signed (no Apple Developer ID), so users open the app once
+# via System Settings → Privacy & Security → "Open Anyway". See README.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - run: pnpm install --frozen-lockfile
+
+      # `cargo test` compiles the app, which embeds the built frontend (dist/).
+      - name: Test
+        run: |
+          pnpm build
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "AI reactor ${{ github.ref_name }}"
+          releaseBody: |
+            **Install:** download the `.dmg` below, drag AI reactor to Applications.
+            First launch is blocked because the app isn't signed with a paid Apple ID —
+            open **System Settings → Privacy & Security → Open Anyway**.
+            When macOS asks about the "Claude Code-credentials" keychain item, click **Always Allow**.
+
+            Updating from an earlier version? macOS will ask for keychain access once more — click **Always Allow** again.
+
+            Full instructions: https://github.com/jen454/AI-reactor#install
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin --bundles app,dmg

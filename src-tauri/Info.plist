@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Tauri merges this file into the generated Info.plist at bundle time.
+
+       LSUIElement tells launchd, before a single line of our code runs, that
+       this is a menu bar accessory: no Dock tile, no Cmd-Tab entry. We also
+       set the activation policy at runtime (platform::hide_from_dock) so
+       `cargo run` / `tauri dev` behave the same way, but only the plist key
+       prevents the Dock icon from flashing during launch. -->
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>

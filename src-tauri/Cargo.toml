@@ -1,0 +1,51 @@
+[package]
+name = "ai-reactor"
+version = "0.1.0"
+description = "Claude and Codex usage limits as gauges in the macOS menu bar"
+authors = ["jinwook"]
+license = "MIT"
+repository = "https://github.com/jen454/AI-reactor"
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the library name distinct from the binary name.
+# (Only actually matters on Windows, but the Tauri template ships it everywhere.)
+name = "ai_reactor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# These are Cargo *features*, not separate crates.
+#  - `tray-icon`: without it the `tauri::tray` module does not exist at all.
+#  - `macos-private-api`: required by `"transparent": true` in tauri.conf.json,
+#    which the frosted popover background needs. Tauri cross-checks the two and
+#    refuses to build if they disagree. Note this uses private AppKit calls, so
+#    the app cannot be shipped through the Mac App Store — fine for a menu bar
+#    utility distributed directly, but worth knowing before that decision.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+# Places the popover window under the tray icon. Its own `tray-icon` feature
+# adds the `on_tray_event` hook we need to remember where the icon was clicked.
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1.9.0"
+thiserror = "2.0.20"
+time = { version = "0.3.55", features = ["parsing"] }
+ureq = { version = "3.4.1", default-features = false, features = ["native-tls", "json", "gzip"] }
+tauri-plugin-notification = "2.4.0"
+tauri-plugin-autostart = "2.5.1"
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+security-framework = "3.7.0"
+window-vibrancy = "0.6.0"

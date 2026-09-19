@@ -1,0 +1,475 @@
+/*
+ * The popover is a borderless, transparent Tauri window: the rounded card
+ * below is the only thing the user sees, so the page itself must not paint a
+ * background of its own.
+ */
+:root {
+  color-scheme: light dark;
+
+  --pc-bg: rgb(246 246 248 / 0.82);
+  --pc-fg: #16161a;
+  --pc-fg-dim: #6b6b76;
+  --pc-border: rgb(0 0 0 / 0.1);
+  --pc-track: rgb(0 0 0 / 0.08);
+  --pc-code-bg: rgb(0 0 0 / 0.07);
+  --pc-button-bg: rgb(255 255 255 / 0.7);
+  --pc-button-bg-hover: rgb(255 255 255 / 0.95);
+
+  /* One colour per usage band, shared with the cat's states in milestone 5.
+     Hue carries the meaning; nothing here relies on a colour alone, because
+     the percentage is always printed next to the bar. */
+  --pc-accent: #3f7d9e;
+  --pc-ok: #3f9e5a;
+  --pc-warn: #a8660f;
+  --pc-card-bg: rgb(255 255 255 / 0.5);
+  --pc-skeleton-sheen: rgb(0 0 0 / 0.03);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pc-bg: rgb(30 30 34 / 0.78);
+    --pc-fg: #f2f2f5;
+    --pc-fg-dim: #9a9aa5;
+    --pc-border: rgb(255 255 255 / 0.12);
+    --pc-track: rgb(255 255 255 / 0.12);
+    --pc-code-bg: rgb(255 255 255 / 0.12);
+    --pc-button-bg: rgb(255 255 255 / 0.1);
+    --pc-button-bg-hover: rgb(255 255 255 / 0.18);
+
+    --pc-accent: #6fb4d8;
+    --pc-ok: #58c078;
+    --pc-warn: #e0a955;
+    --pc-card-bg: rgb(255 255 255 / 0.05);
+    --pc-skeleton-sheen: rgb(255 255 255 / 0.07);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* No fixed height anywhere: the window is sized to this content by
+   `useAutoHeight`, so the card measures itself and the frame follows. */
+html,
+body,
+#root {
+  margin: 0;
+  background: transparent;
+}
+
+body {
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  color: var(--pc-fg);
+  /* A menu bar panel is chrome, not a document — no text selection, no drag. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--pc-code-bg);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 0.92em;
+}
+
+.popover {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 13px 16px 14px;
+  border: 1px solid var(--pc-border);
+  border-radius: 12px;
+  background: var(--pc-bg);
+  /* Frosts whatever is behind the transparent window, the way AppKit's
+     NSVisualEffectView does for real popovers. */
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  overflow: hidden;
+}
+
+.popover__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.popover__brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.popover__mark {
+  display: block;
+}
+
+.popover__title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.popover__gauges {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.popover__body {
+  display: grid;
+  place-items: center;
+  padding: 8px 0 4px;
+}
+
+/* ---- provider card ---- */
+
+.popover__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  padding: 10px 12px;
+  border: 1px solid var(--pc-border);
+  border-radius: 9px;
+  background: var(--pc-card-bg);
+}
+
+/* An absent provider is an invitation, not a failure. It recedes rather than
+   shouting, so a one-agent user does not read the app as half broken. */
+.card[data-status="notInstalled"] {
+  opacity: 0.55;
+}
+
+.card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.card__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card__icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card__icon-wrap[data-chip] {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: #0a0a0a;
+}
+
+.card__icon-wrap[data-chip] .card__icon {
+  width: 10px;
+  height: 10px;
+}
+
+.card__icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.card__name {
+  font-weight: 600;
+}
+
+/* The plan, as a quiet tag beside the name — context, not a status. */
+.card__plan {
+  padding: 1px 6px;
+  border: 1px solid var(--pc-border);
+  border-radius: 999px;
+  color: var(--pc-fg-dim);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.card__account {
+  margin: -4px 0 8px;
+  color: var(--pc-fg-dim);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__age {
+  color: var(--pc-fg-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* When the reading is not current the age stops being a detail and becomes
+   the point, so it takes the warning colour then and only then. */
+.card[data-status="stale"] .card__age,
+.card[data-status="expired"] .card__age {
+  color: var(--pc-warn);
+}
+
+.card__gauges {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card__note {
+  margin: 0;
+  color: var(--pc-fg-dim);
+  text-wrap: pretty;
+}
+
+/* Sits under the gauges rather than replacing them: numbers that are real but
+   not current need both the figure and the fix. */
+.card__note--caveat {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--pc-border);
+  color: var(--pc-warn);
+  font-size: 12px;
+}
+
+/* ---- loading ---- */
+
+/* A skeleton means "data is on its way". It must never stand in for an empty
+   provider, or people wait for something that is never coming. */
+.skeleton {
+  height: 56px;
+  border-radius: 9px;
+  background: linear-gradient(
+    90deg,
+    var(--pc-track) 25%,
+    var(--pc-skeleton-sheen) 37%,
+    var(--pc-track) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+
+/* ---- gauge ---- */
+
+.gauge {
+  /* One calm accent. The spec warns off colour-coded severity: bananas are
+     yellow by identity, and a green/amber/red ladder here would compete with
+     the shape language the menu bar uses. Urgency is carried by the number
+     and by the monkey, not by tinting every bar. */
+  --band: var(--pc-accent);
+}
+
+/* Numbers that are not current are dimmed rather than hidden. Still readable,
+   visibly not live. */
+.gauge[data-muted] {
+  opacity: 0.55;
+}
+
+.gauge__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.gauge__label {
+  color: var(--pc-fg-dim);
+}
+
+.gauge__percent {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--band);
+}
+
+.gauge__track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--pc-track);
+  overflow: hidden;
+}
+
+.gauge__fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--band);
+  /* The bar is the only thing here that moves, and it moves once per poll.
+     Transition rather than animation: no frames are spent while it sits. */
+  transition: width 220ms ease-out, background-color 220ms ease-out;
+}
+
+.gauge__reset {
+  margin: 5px 0 0;
+  color: var(--pc-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- footer ---- */
+
+.footer {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--pc-border);
+  color: var(--pc-fg-dim);
+  font-size: 12px;
+  text-wrap: pretty;
+}
+
+.footer--warn {
+  color: var(--pc-warn);
+}
+
+/* ---- empty state ---- */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.empty__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.empty__title--quiet {
+  font-weight: 400;
+  color: var(--pc-fg-dim);
+}
+
+.empty__detail {
+  margin: 0;
+  color: var(--pc-fg-dim);
+  text-wrap: pretty;
+}
+
+/* ---- heartbeat ---- */
+
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.health__mark {
+  position: relative;
+  display: inline-flex;
+  width: 7px;
+  height: 7px;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The words stay quiet — this is reassurance, not a headline. The dot carries
+   the state; the label only says what it means. */
+.health__label {
+  color: var(--pc-fg-dim);
+}
+
+.health[data-state="overdue"] .health__label {
+  color: var(--pc-warn);
+}
+
+.health__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  /* `currentColor` so the dot and its ring can never disagree about the
+     state — one token drives both. */
+  background: currentColor;
+}
+
+/* Alive. Green at full strength: a 6px dot at half opacity reads as sickly
+   rather than subtle. */
+.health[data-state="ok"] {
+  color: var(--pc-ok);
+}
+
+/* Before the first check there is nothing to report yet — not alive, not
+   stopped. Grey says so without claiming either. */
+.health[data-state="waiting"] {
+  color: var(--pc-fg-dim);
+  opacity: 0.55;
+}
+
+/* Checks have stopped. The one case worth raising your voice about. */
+.health[data-state="overdue"] {
+  color: var(--pc-warn);
+}
+
+/* One expanding ring per check, then nothing. */
+.health__pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  animation: health-pulse 900ms ease-out 1 both;
+}
+
+@keyframes health-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  to {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+
+
+
+.popover__action {
+  margin-top: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--pc-border);
+  border-radius: 6px;
+  background: var(--pc-button-bg);
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.popover__action:hover:not(:disabled) {
+  background: var(--pc-button-bg-hover);
+}
+
+.popover__action:disabled {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge__fill {
+    transition: none;
+  }
+  .skeleton {
+    animation: none;
+  }
+  .health__pulse {
+    animation: none;
+  }
+}
