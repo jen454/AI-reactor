@@ -38,9 +38,8 @@ export function useUsageReport(visible: boolean) {
   /**
    * Read every provider now.
    *
-   * Goes through the poller, so each provider's backoff still applies — the
-   * button cannot punch through a rate-limit wait, it can only skip the idle
-   * part of the cycle.
+   * Goes through the poller. It clears transient wake/network/auth waits but
+   * cannot punch through a provider's real rate-limit deadline.
    */
   const refresh = useCallback(async () => {
     setRefreshing(true);

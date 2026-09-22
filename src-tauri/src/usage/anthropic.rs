@@ -221,6 +221,23 @@ impl UsageProvider for AnthropicUsageProvider {
     }
 
     fn fetch(&self) -> Result<Reading, UsageError> {
+        match self.fetch_once() {
+            Err(UsageError::Unauthorized) => {
+                // Another Claude Code process can rotate the access token
+                // while this app is asleep. Its old value may still have a
+                // future expiresAt, so expiry-based cache eviction alone
+                // cannot recover. Reload the CLI-owned credential and retry
+                // exactly once; never touch the refresh token ourselves.
+                self.credentials.invalidate_cached();
+                self.fetch_once()
+            }
+            result => result,
+        }
+    }
+}
+
+impl AnthropicUsageProvider {
+    fn fetch_once(&self) -> Result<Reading, UsageError> {
         // `use_token` hands the token to this closure by reference and keeps
         // it inside the store's lock, so it never lands in a local that could
         // be logged or outlive the request.
@@ -251,8 +268,8 @@ impl UsageProvider for AnthropicUsageProvider {
                 // what `Reading::live` means.
                 parse_response(&body).map(Reading::live)
             }
-            // The token is dead. We report it and stop; the CLI will refresh
-            // it the next time the user runs `claude`.
+            // The outer fetch reloads the CLI-owned credential and retries
+            // once before this error reaches the poller.
             401 | 403 => Err(UsageError::Unauthorized),
             429 => Err(UsageError::RateLimited {
                 retry_after_ms: retry_after_ms(&response),

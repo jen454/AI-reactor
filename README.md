@@ -44,10 +44,10 @@ Claude나 Codex 중 하나만 사용해도 됩니다. 사용하지 않는 서비
 
 ```sh
 # 공개 저장소인 경우, 이 저장소의 소스 코드로 GitHub Actions에서 빌드됐는지 확인
-gh attestation verify "AI.reactor_0.2.0_universal.dmg" -R jen454/AI-reactor
+gh attestation verify "AI.reactor_0.2.1_universal.dmg" -R jen454/AI-reactor
 
 # 또는 같은 릴리스의 SHA256SUMS.txt와 해시 비교
-shasum -a 256 "AI.reactor_0.2.0_universal.dmg"
+shasum -a 256 "AI.reactor_0.2.1_universal.dmg"
 ```
 
 ## 최초 실행
@@ -76,7 +76,7 @@ shasum -a 256 "AI.reactor_0.2.0_universal.dmg"
 
 앱이 절대로 하지 않는 일:
 
-- **토큰을 갱신하거나 수정하지 않습니다.** 토큰은 `claude` CLI의 소유입니다. 이 앱에서 토큰을 갱신하면 CLI가 로그아웃될 수 있습니다. 토큰이 만료되면 카드에서 `claude`를 한 번 실행하라고 안내합니다.
+- **토큰을 갱신하거나 수정하지 않습니다.** 토큰은 `claude` CLI의 소유입니다. Claude Code가 토큰을 교체해 기존 토큰이 거부되면 키체인의 최신 값을 다시 읽어 한 번 재시도합니다. 최신 값도 만료된 경우에는 카드에서 `claude`를 한 번 실행하라고 안내합니다.
 - `~/.claude` 또는 `~/.codex`에 **파일을 쓰지 않습니다.**
 - `~/.codex/auth.json`을 **읽지 않습니다.** 이 때문에 Codex 카드에는 요금제는 표시되지만 이메일은 표시되지 않습니다.
 - 토큰은 메모리에만 보관하며 파일이나 로그에 저장하지 않습니다.
@@ -87,6 +87,7 @@ AI reactor가 직접 보내는 네트워크 요청은 `GET https://api.anthropic
 
 - **사용에 따른 책임은 사용자에게 있습니다.** AI reactor는 Claude Code가 Mac에 저장한 로그인을 재사용하여 사용량을 조회합니다. Claude Code의 `/usage`와 동일한 읽기 전용 요청이지만, 다른 앱에서 이 로그인 정보를 사용하는 것은 공식적으로 지원되는 방식이 아닙니다. [Anthropic 이용 약관](https://www.anthropic.com/legal/consumer-terms)을 검토한 후 사용할지 직접 결정하세요. 이 프로젝트에는 어떠한 보증도 제공되지 않습니다([LICENSE](LICENSE) 참고).
 - Claude 사용량 API는 **공식 문서에 공개되지 않은 엔드포인트**입니다. Claude Code 자체에서 사용하는 엔드포인트지만 예고 없이 변경될 수 있습니다. 변경되면 앱이 업데이트될 때까지 Claude 카드에 마지막으로 확인한 수치가 오래된 정보로 표시됩니다.
+- Mac이 잠자기에서 깨어난 직후 네트워크나 키체인이 아직 준비되지 않았다면 잠시 이전 값이 보일 수 있습니다. 앱은 짧게 대기한 뒤 자동으로 다시 확인하며, **새로고침**을 누르면 일반 오류 대기를 건너뜁니다. 실제 요청 제한(429)은 서버가 지정한 시각까지 유지됩니다.
 - Codex 수치는 App Server에서 실시간으로 가져옵니다. App Server를 실행할 수 없거나 조회가 실패하면 Codex CLI 로그의 마지막 기록으로 자동 전환됩니다.
 - 메뉴 막대 게이지는 항상 가장 짧은 기간인 **현재 세션 한도**를 표시합니다. 정확한 백분율과 주간·월간 한도는 팝오버에서 확인할 수 있습니다.
 

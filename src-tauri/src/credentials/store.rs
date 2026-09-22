@@ -149,6 +149,18 @@ impl CredentialStore {
         self.state()
     }
 
+    /// Drop only the in-memory copy of the CLI credential.
+    ///
+    /// Claude Code may rotate its access token while AI reactor is asleep or
+    /// while another terminal session is active. In that case our cached
+    /// token can receive a 401 even though its local expiry time is still in
+    /// the future. The usage provider calls this after that response so the
+    /// next read comes from the keychain. We deliberately do not refresh the
+    /// token ourselves; Claude Code remains its sole owner.
+    pub fn invalidate_cached(&self) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).cached = None;
+    }
+
     /// Run `f` with the access token, if there is a usable one.
     ///
     /// Milestone 3 builds its request inside this closure. Handing out a
@@ -254,6 +266,18 @@ mod tests {
             assert!(matches!(store.state_at(0), CredentialState::Ok { .. }));
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1, "cache did not hold");
+    }
+
+    #[test]
+    fn invalidating_the_cache_reads_the_store_again() {
+        let (store, calls) = counting(|| Ok(blob(now_ms() + HOUR_MS)));
+
+        assert!(matches!(store.state(), CredentialState::Ok { .. }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        store.invalidate_cached();
+        assert!(matches!(store.state(), CredentialState::Ok { .. }));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     /// Once the cached token ages out, we go back to the store — the CLI may

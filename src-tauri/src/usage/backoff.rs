@@ -20,7 +20,7 @@ pub const RATE_LIMIT_FLOOR_MS: i64 = 5 * 60 * 1000;
 pub const MIN_RATE_LIMIT_WAIT_MS: i64 = 30_000;
 
 /// First delay after a network or server failure.
-const FAILURE_BASE_MS: i64 = 60_000;
+const FAILURE_BASE_MS: i64 = 10_000;
 /// Ceiling for the doubling.
 const FAILURE_MAX_MS: i64 = 15 * 60 * 1000;
 
@@ -29,6 +29,7 @@ pub struct Backoff {
     /// No request before this instant. `None` means "go ahead".
     blocked_until_ms: Option<i64>,
     consecutive_failures: u32,
+    rate_limited: bool,
     /// Off only in demo mode, where nothing is being fetched and there is
     /// nothing to be gentle towards. A disabled backoff still *records* its
     /// state so nothing downstream has to special-case it.
@@ -40,6 +41,7 @@ impl Default for Backoff {
         Self {
             blocked_until_ms: None,
             consecutive_failures: 0,
+            rate_limited: false,
             enabled: true,
         }
     }
@@ -81,6 +83,7 @@ impl Backoff {
     pub fn note_success(&mut self) {
         self.blocked_until_ms = None;
         self.consecutive_failures = 0;
+        self.rate_limited = false;
     }
 
     /// A 429.
@@ -106,6 +109,7 @@ impl Backoff {
         };
 
         self.blocked_until_ms = Some(until);
+        self.rate_limited = true;
         // A 429 is not a fault we should escalate against; the reset time
         // already governs when we return.
         self.consecutive_failures = 0;
@@ -113,9 +117,10 @@ impl Backoff {
 
     /// A network error, a 5xx, or an unreadable body: wait, doubling each time.
     pub fn note_failure(&mut self, now_ms: i64) {
+        self.rate_limited = false;
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
-        // 1min, 2, 4, 8, then pinned at 15. `min(20)` on the shift keeps the
-        // exponent from overflowing after a very long outage.
+        // 10s, 20s, 40s, … then pinned at 15min. A short first retry helps
+        // after wake, when Wi-Fi often becomes usable moments after us.
         let delay = FAILURE_BASE_MS
             .saturating_mul(1_i64 << (self.consecutive_failures - 1).min(20))
             .min(FAILURE_MAX_MS);
@@ -128,6 +133,16 @@ impl Backoff {
     pub fn note_expired(&mut self, now_ms: i64) {
         self.blocked_until_ms = Some(now_ms + FAILURE_BASE_MS);
         self.consecutive_failures = 0;
+        self.rate_limited = false;
+    }
+
+    /// Let an explicit user refresh retry transient failures immediately.
+    /// A real 429 remains protected by its server/reset-derived deadline.
+    pub fn clear_transient_wait(&mut self) {
+        if !self.rate_limited {
+            self.blocked_until_ms = None;
+            self.consecutive_failures = 0;
+        }
     }
 }
 
@@ -136,6 +151,7 @@ mod tests {
     use super::*;
 
     const MIN: i64 = 60_000;
+    const FAILURE_BASE: i64 = 10_000;
 
     #[test]
     fn a_fresh_backoff_allows_requests() {
@@ -209,11 +225,11 @@ mod tests {
     fn failures_double_up_to_a_ceiling() {
         let mut b = Backoff::new();
         b.note_failure(0);
-        assert_eq!(b.remaining_ms(0), MIN);
+        assert_eq!(b.remaining_ms(0), FAILURE_BASE);
         b.note_failure(0);
-        assert_eq!(b.remaining_ms(0), 2 * MIN);
+        assert_eq!(b.remaining_ms(0), 2 * FAILURE_BASE);
         b.note_failure(0);
-        assert_eq!(b.remaining_ms(0), 4 * MIN);
+        assert_eq!(b.remaining_ms(0), 4 * FAILURE_BASE);
         for _ in 0..20 {
             b.note_failure(0);
         }
@@ -229,7 +245,20 @@ mod tests {
         assert!(b.allows_request(0));
         // And the doubling restarts from the base.
         b.note_failure(0);
-        assert_eq!(b.remaining_ms(0), MIN);
+        assert_eq!(b.remaining_ms(0), FAILURE_BASE);
+    }
+
+    #[test]
+    fn manual_retry_clears_failures_but_not_rate_limits() {
+        let mut failed = Backoff::new();
+        failed.note_failure(0);
+        failed.clear_transient_wait();
+        assert!(failed.allows_request(0));
+
+        let mut limited = Backoff::new();
+        limited.note_rate_limited(0, Some(120_000), None);
+        limited.clear_transient_wait();
+        assert!(!limited.allows_request(0));
     }
 
     /// A long outage must not overflow the shift and wrap into a negative delay.

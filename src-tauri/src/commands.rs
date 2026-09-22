@@ -48,14 +48,11 @@ pub struct UsageReport {
 
 /// Read every provider now.
 ///
-/// The spec asks for a refresh button, and this is it — but it goes through
-/// the poller rather than around it. Each provider's own backoff still
-/// applies, so a button press during a rate limit is a no-op for that provider
-/// instead of a way to punch through the wait. A manual escape hatch that can
-/// make things worse is not an escape hatch.
+/// The refresh button retries ordinary wake/network/auth failures immediately
+/// while still respecting a provider's explicit 429 deadline.
 #[tauri::command]
 pub fn refresh_usage(registry: State<'_, Arc<UsageRegistry>>) -> UsageReport {
-    registry.poll_all();
+    registry.poll_all_manual();
     usage_report(registry)
 }
 

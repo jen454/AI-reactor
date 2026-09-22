@@ -86,6 +86,10 @@ impl ProviderPoller {
         self.poll_at(now_ms())
     }
 
+    fn allow_manual_retry(&self) {
+        self.lock().backoff.clear_transient_wait();
+    }
+
     /// `poll`, with the clock injected so backoff and staleness are testable.
     pub fn poll_at(&self, now_ms: i64) -> ProviderSnapshot {
         // Check the backoff *before* reading, and release the lock before any
@@ -425,6 +429,15 @@ impl UsageRegistry {
 
     pub fn poll_all(&self) -> Vec<ProviderSnapshot> {
         self.poll_all_at(now_ms())
+    }
+
+    /// User-requested refresh: retry ordinary wake/network/auth failures now,
+    /// while preserving a provider's explicit 429 deadline.
+    pub fn poll_all_manual(&self) -> Vec<ProviderSnapshot> {
+        for poller in &self.pollers {
+            poller.allow_manual_retry();
+        }
+        self.poll_all()
     }
 
     /// Failure reasons, for the log and the provider cards.
@@ -857,16 +870,16 @@ mod tests {
         ]);
 
         poller.poll_at(0);
-        for t in 1..=59 {
+        for t in 1..=9 {
             poller.poll_at(t * 1_000);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        poller.poll_at(MIN);
+        poller.poll_at(10_000);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        poller.poll_at(2 * MIN);
+        poller.poll_at(29_000);
         assert_eq!(calls.load(Ordering::SeqCst), 2, "still parked");
-        poller.poll_at(3 * MIN);
+        poller.poll_at(30_000);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
