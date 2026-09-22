@@ -252,10 +252,9 @@ impl State {
             }
 
             Err(UsageError::RateLimited { retry_after_ms }) => {
-                // The limit cannot lift before the window turns over, so hand
-                // the backoff the soonest reset we know of.
-                self.backoff
-                    .note_rate_limited(now_ms, retry_after_ms, self.next_reset_ms());
+                // Throttling of the usage query, not a spent limit: pause
+                // briefly and let the regular poll try again.
+                self.backoff.note_rate_limited(now_ms, retry_after_ms);
                 self.degrade(id, SnapshotStatus::Stale, now_ms)
             }
 
@@ -281,6 +280,16 @@ impl State {
                     return ProviderSnapshot::empty(id, SnapshotStatus::Error, now_ms)
                         .with_reason(ErrorReason::WindowReset);
                 }
+                // A failed check leaves the last reading standing; it only
+                // becomes "stale" once it is old enough to doubt.
+                let status = match status {
+                    SnapshotStatus::Stale
+                        if now_ms - good.captured_at_ms <= STALE_AFTER_MS =>
+                    {
+                        SnapshotStatus::Ok
+                    }
+                    other => other,
+                };
                 ProviderSnapshot {
                     provider: id,
                     windows: good.windows.clone(),
@@ -298,25 +307,16 @@ impl State {
             },
         }
     }
-
-    fn next_reset_ms(&self) -> Option<i64> {
-        self.last_good
-            .as_ref()?
-            .windows
-            .iter()
-            .map(|w| w.resets_at_ms)
-            .min()
-    }
 }
 
-/// How much of a window may pass before its reading counts as stale.
+/// How old a reading may get before the card flags it.
 ///
-/// Proportional rather than absolute, because the windows are not comparable:
-/// a reading thirty minutes into a five-hour window has missed real usage,
-/// while the same thirty minutes into a thirty-day window has missed almost
-/// nothing. One flat "older than an hour" rule would dim a perfectly good
-/// monthly figure and wave through a badly out-of-date session one.
-const STALE_FRACTION: f64 = 0.10;
+/// The poller refreshes every three minutes, so a reading older than this
+/// means about three checks in a row came back empty-handed — a real problem
+/// worth a warning. One failed check (say, right after wake, before Wi-Fi is
+/// back) leaves a reading a few minutes old that is still right, and flagging
+/// it would only teach people to ignore the flag.
+const STALE_AFTER_MS: i64 = 10 * 60 * 1000;
 
 /// How much to trust a reading, given when it was captured.
 fn freshness(windows: &[LimitWindow], captured_at_ms: i64, now_ms: i64) -> SnapshotStatus {
@@ -331,14 +331,7 @@ fn freshness(windows: &[LimitWindow], captured_at_ms: i64, now_ms: i64) -> Snaps
         return SnapshotStatus::Error;
     }
 
-    let age_ms = (now_ms - captured_at_ms).max(0) as f64;
-    let shortest_window_ms = windows
-        .iter()
-        .map(|w| w.window_minutes as i64 * 60_000)
-        .min()
-        .unwrap_or(i64::MAX) as f64;
-
-    if age_ms > shortest_window_ms * STALE_FRACTION {
+    if now_ms - captured_at_ms > STALE_AFTER_MS {
         SnapshotStatus::Stale
     } else {
         SnapshotStatus::Ok
@@ -566,16 +559,23 @@ mod tests {
         assert_eq!(snapshot.provider, ProviderId::Claude);
     }
 
-    /// The core promise: a failure shows the old numbers, not a blank panel.
+    /// The core promise: a failure shows the old numbers, not a blank panel —
+    /// and only flags them once they are old enough to doubt.
     #[test]
     fn a_failure_after_a_success_goes_stale_keeping_the_numbers() {
         let (poller, _) = poller_from(vec![
             Ok(windows(58.0)),
             Err(UsageError::Transport("offline".into())),
+            Err(UsageError::Transport("offline".into())),
         ]);
         poller.poll_at(0);
 
-        let stale = poller.poll_at(MIN);
+        // One missed check (right after wake, say): still trusted.
+        let recent = poller.poll_at(3 * MIN);
+        assert_eq!(recent.status, SnapshotStatus::Ok);
+        assert_eq!(recent.captured_at_ms, 0);
+
+        let stale = poller.poll_at(11 * MIN);
         assert_eq!(stale.status, SnapshotStatus::Stale);
         assert_eq!(stale.remaining_percent(), Some(58.0), "numbers are kept");
         assert_eq!(stale.captured_at_ms, 0, "timestamp says when they were true");
@@ -652,45 +652,26 @@ mod tests {
         assert_eq!(poller.poll_at(0).status, SnapshotStatus::Error);
     }
 
-    // ---- freshness ages with the window ----
+    // ---- freshness ----
 
-    /// A reading taken a while ago has missed whatever usage happened since.
-    /// How much that matters depends entirely on the window: half an hour into
-    /// a five-hour session is a lot, half an hour into a month is nothing.
+    /// Three missed three-minute checks is the line: past ten minutes old, a
+    /// reading is flagged, whatever the window length.
     #[test]
-    fn a_reading_goes_stale_after_a_tenth_of_its_window() {
-        let session = || {
-            Reading {
-                windows: vec![LimitWindow {
-                    window_minutes: 300, // five hours
-                    remaining_percent: 40.0,
-                    resets_at_ms: 100 * HOUR,
-                }],
-                captured_at_ms: Some(0),
-            }
-        };
-
-        let (poller, _) = poller_from(vec![Ok(session()), Ok(session())]);
-        // 29 minutes in: under a tenth of five hours, still current.
-        assert_eq!(poller.poll_at(29 * MIN).status, SnapshotStatus::Ok);
-        // 31 minutes in: past it.
-        assert_eq!(poller.poll_at(31 * MIN).status, SnapshotStatus::Stale);
-    }
-
-    /// The same half hour against a monthly window is nothing at all, which is
-    /// why the rule is proportional rather than a flat "older than an hour".
-    #[test]
-    fn the_same_age_is_fine_for_a_much_longer_window() {
-        let monthly = Reading {
+    fn a_reading_goes_stale_after_ten_minutes() {
+        let logged = |window_minutes| Reading {
             windows: vec![LimitWindow {
-                window_minutes: 43_200, // thirty days
-                remaining_percent: 64.0,
+                window_minutes,
+                remaining_percent: 40.0,
                 resets_at_ms: 1_000 * HOUR,
             }],
             captured_at_ms: Some(0),
         };
-        let (poller, _) = poller_from(vec![Ok(monthly)]);
-        assert_eq!(poller.poll_at(31 * MIN).status, SnapshotStatus::Ok);
+
+        for window in [300, 43_200] {
+            let (poller, _) = poller_from(vec![Ok(logged(window)), Ok(logged(window))]);
+            assert_eq!(poller.poll_at(10 * MIN).status, SnapshotStatus::Ok);
+            assert_eq!(poller.poll_at(10 * MIN + 1).status, SnapshotStatus::Stale);
+        }
     }
 
     /// A provider that answers for *now* — Claude — never ages on its own.
@@ -825,40 +806,64 @@ mod tests {
         assert_eq!(snapshot.remaining_percent(), Some(58.0));
     }
 
-    /// The spec's 429 rule, end to end.
+    /// A 429 throttles the usage query, not the user's limit: the gauge must
+    /// not freeze until the window resets, only skip until the next poll.
     #[test]
-    fn a_429_stops_all_requests_until_the_window_resets() {
-        let reset = 30 * MIN;
-        let limited = Reading::live(vec![LimitWindow {
+    fn a_429_resumes_on_the_next_poll_cycle_not_at_the_window_reset() {
+        let reset = 5 * 60 * MIN;
+        let reading = Reading::live(vec![LimitWindow {
             window_minutes: 300,
-            remaining_percent: 1.0,
+            remaining_percent: 40.0,
             resets_at_ms: reset,
         }]);
         let (poller, calls) = poller_from(vec![
-            Ok(limited),
+            Ok(reading),
             Err(UsageError::RateLimited {
-                retry_after_ms: None,
+                retry_after_ms: Some(0),
             }),
-            Ok(windows(90.0)),
+            Ok(windows(35.0)),
         ]);
 
         poller.poll_at(0);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-        poller.poll_at(MIN);
+        poller.poll_at(3 * MIN);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        for minute in 2..30 {
-            poller.poll_at(minute * MIN);
-        }
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "must not retry before the reset"
-        );
+        // `Retry-After: 0` is floored, not taken literally.
+        poller.poll_at(3 * MIN + 1_000);
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "must not hammer");
 
-        assert_eq!(poller.poll_at(reset).status, SnapshotStatus::Ok);
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        let snapshot = poller.poll_at(6 * MIN);
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "next cycle retries");
+        assert_eq!(snapshot.status, SnapshotStatus::Ok);
+        assert_eq!(snapshot.remaining_percent(), Some(35.0));
+    }
+
+    /// Whatever keeps going wrong, both providers are asked again on every
+    /// three-minute tick — the wait never swallows a whole cycle.
+    #[test]
+    fn every_idle_tick_polls_even_through_repeated_failures() {
+        let cycle = super::super::schedule::IDLE_INTERVAL.as_millis() as i64;
+        for id in [ProviderId::Claude, ProviderId::Codex] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let results: Vec<_> = (0..20)
+                .map(|i| match i % 2 {
+                    0 => Err(UsageError::Transport("down".into())),
+                    _ => Err(UsageError::RateLimited { retry_after_ms: None }),
+                })
+                .collect();
+            let poller = ProviderPoller::new(Box::new(Scripted {
+                id,
+                installed: true,
+                results: Mutex::new(results),
+                calls: calls.clone(),
+            }));
+
+            // A request stamps its wait after it returns; model a slow one.
+            for tick in 0..20 {
+                poller.poll_at(tick * cycle + 4_000);
+                assert_eq!(calls.load(Ordering::SeqCst), tick as usize + 1, "{id:?} tick {tick}");
+            }
+        }
     }
 
     #[test]

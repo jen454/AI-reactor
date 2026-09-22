@@ -1,15 +1,23 @@
 //! When we are allowed to touch the endpoint again.
 //!
-//! The spec's rule for 429 is blunt and deliberate: back off immediately and
-//! do not retry until the reset. Hammering a rate-limited endpoint every 60
-//! seconds is how a polling app gets itself throttled harder — and this one
-//! shares an account with the user's actual `claude` sessions, so our retries
-//! would be competing with their work.
+//! A 429 from the usage endpoint throttles *the usage query itself*, not the
+//! user's Claude limit — a spent limit comes back as a normal 200 with
+//! `utilization: 100`. So a 429 only pauses us for as long as the server asks
+//! (floored, so `Retry-After: 0` cannot turn us into a hammer), and the next
+//! regular poll tries again. Waiting for the window reset instead left the
+//! gauge frozen on an hours-old reading after a single refusal.
 
-/// Floor for a 429 that arrived without a usable `Retry-After` and without a
-/// known reset time. Long enough not to hammer, short enough that a transient
-/// limit does not leave the app blind all afternoon.
-pub const RATE_LIMIT_FLOOR_MS: i64 = 5 * 60 * 1000;
+/// The longest any wait may last: just under one idle poll cycle.
+///
+/// Both providers must refresh on every three-minute tick, whatever went
+/// wrong on the last one. The margin matters: a tick is timed from when the
+/// previous cycle *started*, but a wait is stamped when its request *ended*,
+/// so a wait of exactly one cycle expires just after the next tick and the
+/// real gap doubles to six minutes.
+pub const MAX_WAIT_MS: i64 = super::schedule::IDLE_INTERVAL.as_millis() as i64 - 15_000;
+
+/// Wait for a 429 that arrived without a usable `Retry-After`.
+pub const RATE_LIMIT_FLOOR_MS: i64 = MAX_WAIT_MS;
 
 /// The shortest we will *ever* wait after a 429, whatever the header says.
 ///
@@ -21,8 +29,6 @@ pub const MIN_RATE_LIMIT_WAIT_MS: i64 = 30_000;
 
 /// First delay after a network or server failure.
 const FAILURE_BASE_MS: i64 = 10_000;
-/// Ceiling for the doubling.
-const FAILURE_MAX_MS: i64 = 15 * 60 * 1000;
 
 #[derive(Debug)]
 pub struct Backoff {
@@ -86,32 +92,17 @@ impl Backoff {
         self.rate_limited = false;
     }
 
-    /// A 429.
-    ///
-    /// Preference order: the server's own `Retry-After`, then the next window
-    /// reset we know about (the limit cannot lift before then), then a floor.
-    /// We take whichever is *longest* of the first two rather than the first
-    /// available — coming back before the window resets just earns another 429.
-    pub fn note_rate_limited(
-        &mut self,
-        now_ms: i64,
-        retry_after_ms: Option<i64>,
-        next_reset_ms: Option<i64>,
-    ) {
-        let from_header = retry_after_ms.map(|ms| now_ms + ms.max(MIN_RATE_LIMIT_WAIT_MS));
-        let from_reset = next_reset_ms.filter(|&reset| reset > now_ms);
-
-        let until = match (from_header, from_reset) {
-            (Some(a), Some(b)) => a.max(b),
-            (Some(a), None) => a,
-            (None, Some(b)) => b,
-            (None, None) => now_ms + RATE_LIMIT_FLOOR_MS,
-        };
+    /// A 429: wait for the server's `Retry-After` (floored), or one poll
+    /// cycle when it gave none — never past the next idle tick.
+    pub fn note_rate_limited(&mut self, now_ms: i64, retry_after_ms: Option<i64>) {
+        let wait = retry_after_ms
+            .map_or(RATE_LIMIT_FLOOR_MS, |ms| ms.max(MIN_RATE_LIMIT_WAIT_MS))
+            .min(MAX_WAIT_MS);
+        let until = now_ms + wait;
 
         self.blocked_until_ms = Some(until);
         self.rate_limited = true;
-        // A 429 is not a fault we should escalate against; the reset time
-        // already governs when we return.
+        // A 429 is not a fault we should escalate against.
         self.consecutive_failures = 0;
     }
 
@@ -119,11 +110,12 @@ impl Backoff {
     pub fn note_failure(&mut self, now_ms: i64) {
         self.rate_limited = false;
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
-        // 10s, 20s, 40s, … then pinned at 15min. A short first retry helps
-        // after wake, when Wi-Fi often becomes usable moments after us.
+        // 10s, 20s, 40s, … then pinned just under one idle cycle. A short
+        // first retry helps after wake, when Wi-Fi often becomes usable
+        // moments after us.
         let delay = FAILURE_BASE_MS
             .saturating_mul(1_i64 << (self.consecutive_failures - 1).min(20))
-            .min(FAILURE_MAX_MS);
+            .min(MAX_WAIT_MS);
         self.blocked_until_ms = Some(now_ms + delay);
     }
 
@@ -137,7 +129,7 @@ impl Backoff {
     }
 
     /// Let an explicit user refresh retry transient failures immediately.
-    /// A real 429 remains protected by its server/reset-derived deadline.
+    /// A real 429 still waits out its (capped) server-given deadline.
     pub fn clear_transient_wait(&mut self) {
         if !self.rate_limited {
             self.blocked_until_ms = None;
@@ -166,16 +158,30 @@ mod tests {
         for _ in 0..10 {
             b.note_failure(0);
         }
-        b.note_rate_limited(0, Some(600_000), None);
+        b.note_rate_limited(0, Some(600_000));
         assert!(b.allows_request(0));
     }
 
     #[test]
     fn rate_limit_honours_retry_after() {
         let mut b = Backoff::new();
-        b.note_rate_limited(1_000, Some(120_000), None);
+        b.note_rate_limited(1_000, Some(120_000));
         assert!(!b.allows_request(120_000));
         assert!(b.allows_request(121_000));
+    }
+
+    /// Every wait must end before the next three-minute tick.
+    #[test]
+    fn no_wait_outlasts_one_poll_cycle() {
+        assert!(MAX_WAIT_MS < 3 * MIN);
+
+        let mut b = Backoff::new();
+        b.note_rate_limited(0, Some(3_600_000));
+        assert_eq!(b.remaining_ms(0), MAX_WAIT_MS);
+
+        let mut b = Backoff::new();
+        b.note_rate_limited(0, None);
+        assert_eq!(b.remaining_ms(0), MAX_WAIT_MS);
     }
 
     /// Seen in the wild: `Retry-After: 0`. Believing it means retrying
@@ -184,42 +190,15 @@ mod tests {
     #[test]
     fn an_absurdly_short_retry_after_is_floored() {
         let mut b = Backoff::new();
-        b.note_rate_limited(0, Some(0), None);
+        b.note_rate_limited(0, Some(0));
         assert!(!b.allows_request(MIN_RATE_LIMIT_WAIT_MS - 1));
         assert!(b.allows_request(MIN_RATE_LIMIT_WAIT_MS));
 
         let mut b = Backoff::new();
-        b.note_rate_limited(0, Some(1_000), None);
+        b.note_rate_limited(0, Some(1_000));
         assert!(!b.allows_request(MIN_RATE_LIMIT_WAIT_MS - 1));
     }
 
-    /// The spec's rule: do not come back before the window resets.
-    #[test]
-    fn rate_limit_waits_for_the_window_reset_when_it_is_later() {
-        let mut b = Backoff::new();
-        let reset = 10 * MIN;
-        // Server says 30s, but the window does not reset for 10 minutes.
-        // Returning at 30s would just earn another 429.
-        b.note_rate_limited(0, Some(30_000), Some(reset));
-        assert!(!b.allows_request(reset - 1));
-        assert!(b.allows_request(reset));
-    }
-
-    #[test]
-    fn rate_limit_without_any_hint_uses_the_floor() {
-        let mut b = Backoff::new();
-        b.note_rate_limited(0, None, None);
-        assert!(!b.allows_request(RATE_LIMIT_FLOOR_MS - 1));
-        assert!(b.allows_request(RATE_LIMIT_FLOOR_MS));
-    }
-
-    /// A reset time already in the past tells us nothing; fall back.
-    #[test]
-    fn a_stale_reset_time_is_ignored() {
-        let mut b = Backoff::new();
-        b.note_rate_limited(10 * MIN, None, Some(1 * MIN));
-        assert!(!b.allows_request(10 * MIN + RATE_LIMIT_FLOOR_MS - 1));
-    }
 
     #[test]
     fn failures_double_up_to_a_ceiling() {
@@ -233,7 +212,7 @@ mod tests {
         for _ in 0..20 {
             b.note_failure(0);
         }
-        assert_eq!(b.remaining_ms(0), 15 * MIN, "should pin at the ceiling");
+        assert_eq!(b.remaining_ms(0), MAX_WAIT_MS, "should pin at the ceiling");
     }
 
     #[test]
@@ -256,7 +235,7 @@ mod tests {
         assert!(failed.allows_request(0));
 
         let mut limited = Backoff::new();
-        limited.note_rate_limited(0, Some(120_000), None);
+        limited.note_rate_limited(0, Some(120_000));
         limited.clear_transient_wait();
         assert!(!limited.allows_request(0));
     }
@@ -268,6 +247,6 @@ mod tests {
         for _ in 0..500 {
             b.note_failure(0);
         }
-        assert_eq!(b.remaining_ms(0), 15 * MIN);
+        assert_eq!(b.remaining_ms(0), MAX_WAIT_MS);
     }
 }
