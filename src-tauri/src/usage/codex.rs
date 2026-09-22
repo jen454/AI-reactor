@@ -176,6 +176,7 @@ fn parse_app_server_line(line: &str) -> Result<Option<Reading>, String> {
 fn query_app_server(codex: &Path) -> Result<Reading, String> {
     let mut child = Command::new(codex)
         .arg("app-server")
+        .env("PATH", child_path(codex))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -238,6 +239,27 @@ fn query_app_server(codex: &Path) -> Result<Reading, String> {
     drop(stdin);
     let _ = reader.join();
     answer?
+}
+
+/// The `PATH` to launch `codex` with.
+///
+/// An npm/nvm install of `codex` is a `#!/usr/bin/env node` script, and an app
+/// started from Finder or at login inherits only `/usr/bin:/bin:…` — no
+/// `node`. The launch then fails every time, the live query never runs, and
+/// the card silently falls back to the last session log, showing numbers as
+/// old as the last time Codex was used. `node` sits next to `codex` for nvm
+/// and Volta, and in Homebrew's bin for a global npm install, so put those
+/// first and keep whatever we inherited after them.
+fn child_path(codex: &Path) -> std::ffi::OsString {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = codex.parent() {
+        dirs.push(dir.to_path_buf());
+    }
+    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+    if let Some(inherited) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&inherited));
+    }
+    std::env::join_paths(dirs).unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
 }
 
 fn codex_binary() -> Option<PathBuf> {
@@ -587,6 +609,16 @@ impl UsageProvider for CodexUsageProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Launched from Finder the app has no `node` on its PATH; the directory
+    /// holding `codex` (where nvm keeps `node`) must come first.
+    #[test]
+    fn codex_is_launched_with_its_own_directory_on_path() {
+        let path = child_path(Path::new("/Users/x/.nvm/versions/node/v22/bin/codex"));
+        let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+        assert_eq!(dirs[0], PathBuf::from("/Users/x/.nvm/versions/node/v22/bin"));
+        assert!(dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
+    }
 
     const APP_SERVER_LIMITS: &str = r#"{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":25.0,"windowDurationMins":300,"resetsAt":1783127522},"secondary":{"usedPercent":40.0,"windowDurationMins":10080,"resetsAt":1783227522}}}}"#;
 
