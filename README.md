@@ -15,7 +15,7 @@
 - **에이전트별 게이지.** 원호는 **현재 세션**의 남은 한도를 나타내고, 가운데 로고는 어떤 에이전트인지 보여줍니다.
 - **클릭해서 상세 정보 확인.** 팝오버에서 모든 한도 구간(5시간, 주간, 월간), 각 한도의 초기화 시각, 계정과 요금제를 확인할 수 있습니다.
 - **방해 없이 동작.** Dock 아이콘 없이 메뉴 막대에서만 실행됩니다. 백그라운드에서는 3분마다, 팝오버가 열려 있을 때는 30초마다 확인합니다.
-- **로컬에서만 동작.** Claude Code가 `/usage`를 표시할 때 사용하는 요청 외에는 어떤 정보도 외부로 보내지 않습니다. 원격 측정이나 별도 서버도 없습니다.
+- **별도 서버 없음.** 자체 서버나 원격 측정 없이 Claude Code와 Codex CLI의 공식 로그인 경로로 각 서비스의 사용량만 조회합니다.
 
 > AI reactor는 비공식·비상업 프로젝트입니다. Anthropic 또는 OpenAI와 제휴 관계가 없으며 이들로부터 보증이나 승인을 받지 않았습니다. "Claude", "ChatGPT/Codex" 및 관련 로고의 권리는 각 소유자에게 있으며, 여기서는 게이지가 어떤 서비스를 나타내는지 표시하기 위한 용도로만 사용합니다.
 
@@ -23,7 +23,7 @@
 
 - macOS 13 이상(Apple Silicon 및 Intel 지원)
 - **Claude:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code)가 설치되어 있고 Claude 구독 계정으로 로그인되어 있어야 합니다(`claude` → `/login`).
-- **Codex:** [Codex CLI](https://github.com/openai/codex)를 한 번 이상 사용해야 합니다. 게이지는 로컬 세션 로그를 읽습니다.
+- **Codex:** [Codex CLI](https://github.com/openai/codex)가 설치되어 있고 ChatGPT 계정으로 로그인되어 있어야 합니다. 실시간 조회를 지원하지 않는 이전 버전에서는 로컬 세션 로그를 대신 읽습니다.
 
 Claude나 Codex 중 하나만 사용해도 됩니다. 사용하지 않는 서비스의 게이지는 표시되지 않습니다.
 
@@ -44,10 +44,10 @@ Claude나 Codex 중 하나만 사용해도 됩니다. 사용하지 않는 서비
 
 ```sh
 # 이 저장소의 소스 코드로 GitHub Actions에서 빌드됐는지 확인
-gh attestation verify "AI.reactor_0.1.0_universal.dmg" -R jen454/AI-reactor
+gh attestation verify "AI.reactor_0.2.0_universal.dmg" -R jen454/AI-reactor
 
 # 또는 같은 릴리스의 SHA256SUMS.txt와 해시 비교
-shasum -a 256 "AI.reactor_0.1.0_universal.dmg"
+shasum -a 256 "AI.reactor_0.2.0_universal.dmg"
 ```
 
 ## 최초 실행
@@ -71,7 +71,8 @@ shasum -a 256 "AI.reactor_0.1.0_universal.dmg"
 |---|---|---|
 | Claude Code 로그인 토큰 | 키체인의 `Claude Code-credentials` 항목. 키체인 항목이 없으면 `~/.claude/.credentials.json`을 읽기 전용으로 사용 | Claude CLI의 `/usage`와 동일한 방식으로 Anthropic에 사용량 조회 요청 |
 | Claude 계정 이메일과 요금제 | `~/.claude.json`의 `oauthAccount`를 읽기 전용으로 사용 | 팝오버에 계정 정보 표시 |
-| Codex 한도와 요금제 | `~/.codex/sessions/**/rollout-*.jsonl`을 읽기 전용으로 사용 | Codex가 로그에 기록한 한도 정보를 표시하며 네트워크 요청은 필요하지 않음 |
+| Codex 한도 | 설치된 `codex app-server`의 `account/rateLimits/read` | Codex가 인증과 토큰 갱신을 맡은 상태에서 현재 한도를 조회 |
+| Codex 한도와 요금제(대체 경로) | `~/.codex/sessions/**/rollout-*.jsonl`을 읽기 전용으로 사용 | App Server 조회가 불가능할 때 마지막 로그 기록을 표시 |
 
 앱이 절대로 하지 않는 일:
 
@@ -80,13 +81,13 @@ shasum -a 256 "AI.reactor_0.1.0_universal.dmg"
 - `~/.codex/auth.json`을 **읽지 않습니다.** 이 때문에 Codex 카드에는 요금제는 표시되지만 이메일은 표시되지 않습니다.
 - 토큰은 메모리에만 보관하며 파일이나 로그에 저장하지 않습니다.
 
-발생하는 유일한 네트워크 요청은 `GET https://api.anthropic.com/api/oauth/usage`입니다.
+AI reactor가 직접 보내는 네트워크 요청은 `GET https://api.anthropic.com/api/oauth/usage`뿐입니다. Codex 한도 조회는 별도로 설치된 Codex CLI의 App Server가 기존 로그인을 사용해 수행합니다.
 
 ## 알아둘 점
 
 - **사용에 따른 책임은 사용자에게 있습니다.** AI reactor는 Claude Code가 Mac에 저장한 로그인을 재사용하여 사용량을 조회합니다. Claude Code의 `/usage`와 동일한 읽기 전용 요청이지만, 다른 앱에서 이 로그인 정보를 사용하는 것은 공식적으로 지원되는 방식이 아닙니다. [Anthropic 이용 약관](https://www.anthropic.com/legal/consumer-terms)을 검토한 후 사용할지 직접 결정하세요. 이 프로젝트에는 어떠한 보증도 제공되지 않습니다([LICENSE](LICENSE) 참고).
 - Claude 사용량 API는 **공식 문서에 공개되지 않은 엔드포인트**입니다. Claude Code 자체에서 사용하는 엔드포인트지만 예고 없이 변경될 수 있습니다. 변경되면 앱이 업데이트될 때까지 Claude 카드에 마지막으로 확인한 수치가 오래된 정보로 표시됩니다.
-- Codex 수치는 Codex CLI 로그에서 가져오므로 CLI를 사용할 때 갱신됩니다. IDE 확장 프로그램은 해당 로그를 기록하지 않습니다.
+- Codex 수치는 App Server에서 실시간으로 가져옵니다. App Server를 실행할 수 없거나 조회가 실패하면 Codex CLI 로그의 마지막 기록으로 자동 전환됩니다.
 - 메뉴 막대 게이지는 항상 가장 짧은 기간인 **현재 세션 한도**를 표시합니다. 정확한 백분율과 주간·월간 한도는 팝오버에서 확인할 수 있습니다.
 
 ## 소스 코드로 빌드하기

@@ -6,10 +6,11 @@
 //! bar, the popover — works against the trait, so each provider's very
 //! different data path stays behind it.
 //!
-//! That the two paths *are* different is the point. Claude needs an
-//! undocumented OAuth endpoint over the network; Codex's limits are already
-//! sitting in a local session log. If both looked the same, the abstraction
-//! would be shaped around one of them and the third provider would break it.
+//! That the two paths *are* different is the point. Claude uses its OAuth
+//! usage endpoint directly; Codex delegates authentication and the live limit
+//! request to `codex app-server`, with its local session logs as a fallback.
+//! If both looked the same, the abstraction would be shaped around one of them
+//! and the third provider would break it.
 //!
 //! # Two conventions, fixed at the boundary
 //!

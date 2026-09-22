@@ -1,12 +1,12 @@
-//! The adapter for Codex's local session logs.
+//! The adapter for Codex's live App Server limits, with local logs as fallback.
 //!
-//! # No network
+//! # Live first, logs second
 //!
-//! Codex writes the server's own rate-limit snapshot into its session log, so
-//! the numbers are already on disk. That makes this the cheaper of the two
-//! paths — no credential, no request, no rate limit of its own — and it is why
-//! `~/.codex/auth.json` is never opened. We have no reason to touch the
-//! credential, so the safest thing is not to.
+//! `codex app-server` exposes `account/rateLimits/read`, the same supported
+//! account surface used by richer Codex clients. The subprocess owns login and
+//! token refresh; AI reactor never opens `~/.codex/auth.json` or receives a
+//! credential. If the installed CLI is too old, cannot be found, is offline,
+//! or times out, we fall back to the server snapshot Codex last wrote to disk.
 //!
 //! # What the log looks like
 //!
@@ -37,8 +37,12 @@
 //! reporting it honestly is the whole reason [`Reading`] carries one.
 
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -51,6 +55,10 @@ use super::{LimitWindow, ProviderId, Reading, UsageError, UsageProvider};
 /// far: if the last dozen sessions recorded nothing, another hundred will not
 /// help, and the answer "no data" is already correct.
 const MAX_FILES_SCANNED: usize = 12;
+const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(5);
+
+const INITIALIZED: &str = r#"{"method":"initialized","params":{}}"#;
+const READ_LIMITS: &str = r#"{"method":"account/rateLimits/read","id":2}"#;
 
 /// One line of the rollout log, as much of it as we care about.
 #[derive(Debug, Deserialize)]
@@ -94,6 +102,205 @@ impl RawWindow {
             resets_at_ms: self.resets_at.saturating_mul(1000),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppServerResult {
+    rate_limits: Option<AppServerLimits>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppServerEnvelope {
+    id: Option<serde_json::Value>,
+    result: Option<AppServerResult>,
+    error: Option<AppServerError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppServerError {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppServerLimits {
+    primary: Option<AppServerWindow>,
+    secondary: Option<AppServerWindow>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppServerWindow {
+    used_percent: f64,
+    window_duration_mins: u32,
+    resets_at: i64,
+}
+
+impl AppServerWindow {
+    fn into_window(self) -> LimitWindow {
+        LimitWindow {
+            window_minutes: self.window_duration_mins,
+            remaining_percent: 100.0 - self.used_percent.clamp(0.0, 100.0),
+            resets_at_ms: self.resets_at.saturating_mul(1000),
+        }
+    }
+}
+
+fn parse_app_server_line(line: &str) -> Result<Option<Reading>, String> {
+    let envelope: AppServerEnvelope =
+        serde_json::from_str(line).map_err(|error| format!("응답 JSON: {error}"))?;
+    if envelope.id != Some(serde_json::json!(2)) {
+        return Ok(None);
+    }
+    if let Some(error) = envelope.error {
+        return Err(format!("App Server: {}", error.message));
+    }
+    let result = envelope
+        .result
+        .ok_or_else(|| "App Server 응답에 result가 없습니다".to_string())?;
+    let limits = result
+        .rate_limits
+        .ok_or_else(|| "App Server가 한도를 반환하지 않았습니다".to_string())?;
+    let windows: Vec<LimitWindow> = [limits.primary, limits.secondary]
+        .into_iter()
+        .flatten()
+        .map(AppServerWindow::into_window)
+        .collect();
+    if windows.is_empty() {
+        return Err("App Server가 표시할 한도 구간을 반환하지 않았습니다".into());
+    }
+    Ok(Some(Reading::live(windows)))
+}
+
+fn query_app_server(codex: &Path) -> Result<Reading, String> {
+    let mut child = Command::new(codex)
+        .arg("app-server")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("App Server 실행: {error}"))?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "App Server stdin을 열 수 없습니다".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "App Server stdout을 열 수 없습니다".to_string())?;
+
+    let initialize = serde_json::json!({
+        "method": "initialize",
+        "id": 1,
+        "params": {
+            "clientInfo": {
+                "name": "ai_reactor",
+                "title": "AI reactor",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        }
+    })
+    .to_string();
+    for message in [initialize.as_str(), INITIALIZED, READ_LIMITS] {
+        writeln!(stdin, "{message}").map_err(|error| format!("App Server 요청: {error}"))?;
+    }
+    stdin
+        .flush()
+        .map_err(|error| format!("App Server 요청 전송: {error}"))?;
+
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let result = match line {
+                Ok(line) => parse_app_server_line(&line),
+                Err(error) => Err(format!("App Server 응답 읽기: {error}")),
+            };
+            match result {
+                Ok(None) => continue,
+                answer => {
+                    let _ = sender.send(answer.and_then(|reading| {
+                        reading.ok_or_else(|| "App Server 응답이 비어 있습니다".into())
+                    }));
+                    return;
+                }
+            }
+        }
+        let _ = sender.send(Err("App Server가 응답 없이 종료되었습니다".into()));
+    });
+
+    let answer = receiver
+        .recv_timeout(APP_SERVER_TIMEOUT)
+        .map_err(|_| "App Server 응답 시간이 초과되었습니다".to_string());
+    let _ = child.kill();
+    let _ = child.wait();
+    drop(stdin);
+    let _ = reader.join();
+    answer?
+}
+
+fn codex_binary() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("AI_REACTOR_CODEX_BIN").map(PathBuf::from) {
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    if let Some(path) = std::env::var_os("PATH") {
+        if let Some(found) = std::env::split_paths(&path)
+            .map(|dir| dir.join("codex"))
+            .find(|candidate| candidate.is_file())
+        {
+            return Some(found);
+        }
+    }
+
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(home) = home.as_ref() {
+        for relative in [
+            ".local/bin/codex",
+            ".npm-global/bin/codex",
+            ".volta/bin/codex",
+            ".bun/bin/codex",
+        ] {
+            let candidate = home.join(relative);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+
+        let versions = home.join(".nvm/versions/node");
+        if let Ok(entries) = fs::read_dir(versions) {
+            let mut candidates: Vec<PathBuf> = entries
+                .flatten()
+                .map(|entry| entry.path().join("bin/codex"))
+                .filter(|path| path.is_file())
+                .collect();
+            candidates.sort_by_key(|path| {
+                path.parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .map(|version| {
+                        version
+                            .trim_start_matches('v')
+                            .split('.')
+                            .filter_map(|part| part.parse::<u64>().ok())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            });
+            if let Some(candidate) = candidates.pop() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|candidate| candidate.is_file())
 }
 
 /// The newest limit record found in a file, if any.
@@ -198,6 +405,7 @@ fn collect_newest_first(
     };
 
     let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         let Ok(meta) = entry.metadata() else { continue };
@@ -205,9 +413,16 @@ fn collect_newest_first(
         if meta.is_dir() {
             dirs.push(path);
         } else if path.extension().is_some_and(|e| e == "jsonl") {
-            out.push((meta.modified().unwrap_or(std::time::UNIX_EPOCH), path));
+            files.push((meta.modified().unwrap_or(std::time::UNIX_EPOCH), path));
         }
     }
+
+    // read_dir has no ordering guarantee. A busy day can contain more than
+    // `want` rollouts, so taking entries as they arrive may omit the active
+    // session forever. Select the newest local files before spending the
+    // remaining budget.
+    files.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    out.extend(files.into_iter().take(want.saturating_sub(out.len())));
 
     // Newest date first. Names are zero-padded, so this is a date sort.
     dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
@@ -221,6 +436,7 @@ fn collect_newest_first(
 
 pub struct CodexUsageProvider {
     root: PathBuf,
+    app_server_bin: Option<PathBuf>,
     /// The file we last read, and what we found in it.
     ///
     /// Rollouts are append-only and the newest one is usually unchanged
@@ -238,15 +454,23 @@ struct CacheKey {
 
 impl CodexUsageProvider {
     pub fn new() -> Self {
-        Self::rooted(codex_dir().unwrap_or_else(|| PathBuf::from("/nonexistent")))
+        Self {
+            root: codex_dir().unwrap_or_else(|| PathBuf::from("/nonexistent")),
+            app_server_bin: codex_binary(),
+            cache: Mutex::new(None),
+        }
     }
 
     /// Point the adapter at a directory. Tests use this to read fixtures
     /// instead of the real `~/.codex`, which is read-only to us and, on a
     /// machine that has not run Codex in months, has nothing useful in it.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn rooted(root: PathBuf) -> Self {
         Self {
             root,
+            // Fixture-backed unit tests exercise the deterministic log path.
+            // App Server parsing and discovery have their own tests below.
+            app_server_bin: None,
             cache: Mutex::new(None),
         }
     }
@@ -280,6 +504,35 @@ impl CodexUsageProvider {
         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, found.clone()));
         found
     }
+
+    fn fetch_log(&self) -> Result<Reading, UsageError> {
+        let files = rollout_files(&self.sessions_dir(), MAX_FILES_SCANNED);
+        if files.is_empty() {
+            return Err(UsageError::NoData);
+        }
+
+        for path in files.iter() {
+            let Some(Record {
+                windows,
+                captured_at_ms,
+                ..
+            }) = self.read_record(path)
+            else {
+                continue;
+            };
+
+            if windows.is_empty() {
+                return Err(UsageError::NoPlan);
+            }
+
+            return Ok(Reading {
+                windows,
+                captured_at_ms: Some(captured_at_ms),
+            });
+        }
+
+        Err(UsageError::NoData)
+    }
 }
 
 impl Default for CodexUsageProvider {
@@ -301,7 +554,7 @@ impl UsageProvider for CodexUsageProvider {
     /// `fetch`'s job, and conflating them is how an empty card ends up telling
     /// someone to install what they already have.
     fn installed(&self) -> bool {
-        self.root.is_dir()
+        self.root.is_dir() || self.app_server_bin.is_some()
     }
 
     /// The plan named in the newest limit record. No email: Codex only
@@ -321,37 +574,21 @@ impl UsageProvider for CodexUsageProvider {
             return Err(UsageError::NotInstalled);
         }
 
-        let files = rollout_files(&self.sessions_dir(), MAX_FILES_SCANNED);
-        if files.is_empty() {
-            return Err(UsageError::NoData);
-        }
-
-        for path in files.iter() {
-            let Some(Record { windows, captured_at_ms, .. }) = self.read_record(path) else {
-                continue;
-            };
-
-            // The newest record said the account has no windows. That is an
-            // answer, not a miss — walking further back would surface an older
-            // record from a plan the user no longer has and present it as
-            // current.
-            if windows.is_empty() {
-                return Err(UsageError::NoPlan);
+        if let Some(codex) = self.app_server_bin.as_deref() {
+            if let Ok(reading) = query_app_server(codex) {
+                return Ok(reading);
             }
-
-            return Ok(Reading {
-                windows,
-                captured_at_ms: Some(captured_at_ms),
-            });
         }
 
-        Err(UsageError::NoData)
+        self.fetch_log()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const APP_SERVER_LIMITS: &str = r#"{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":25.0,"windowDurationMins":300,"resetsAt":1783127522},"secondary":{"usedPercent":40.0,"windowDurationMins":10080,"resetsAt":1783227522}}}}"#;
 
     /// A record with real windows, as seen on a plan that has limits.
     const WITH_WINDOWS: &str = r#"{"timestamp":"2026-06-08T01:42:38.234Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","plan_type":"go","primary":{"used_percent":100.0,"window_minutes":43200,"resets_at":1783127522},"secondary":null,"credits":{"has_credits":true,"unlimited":false,"balance":null}}}}"#;
@@ -361,6 +598,32 @@ mod tests {
     const NO_PLAN: &str = r#"{"timestamp":"2026-06-10T01:55:18.174Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"premium","limit_name":null,"primary":null,"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":null}}}}"#;
 
     const UNRELATED: &str = r#"{"timestamp":"2026-06-08T01:40:00.000Z","type":"event_msg","payload":{"type":"agent_message","message":"hello"}}"#;
+
+    #[test]
+    fn app_server_limits_are_live_and_flipped_to_remaining() {
+        let reading = parse_app_server_line(APP_SERVER_LIMITS)
+            .expect("valid response")
+            .expect("matching response id");
+        assert_eq!(reading.captured_at_ms, None);
+        assert_eq!(reading.windows.len(), 2);
+        assert_eq!(reading.windows[0].remaining_percent, 75.0);
+        assert_eq!(reading.windows[0].window_minutes, 300);
+        assert_eq!(reading.windows[1].remaining_percent, 60.0);
+    }
+
+    #[test]
+    fn app_server_ignores_other_response_ids() {
+        let initialized = r#"{"id":1,"result":{"userAgent":"codex"}}"#;
+        assert_eq!(parse_app_server_line(initialized).unwrap(), None);
+    }
+
+    #[test]
+    fn app_server_errors_are_safe_to_fall_back_from() {
+        let error = r#"{"id":2,"error":{"code":-32601,"message":"method unavailable"}}"#;
+        assert!(parse_app_server_line(error)
+            .expect_err("error response")
+            .contains("method unavailable"));
+    }
 
     struct Fixture(PathBuf);
 
@@ -570,6 +833,28 @@ mod tests {
 
         let reading = fixture.provider().fetch().expect("should read");
         assert_eq!(reading.windows[0].remaining_percent, 75.0);
+    }
+
+    /// A single busy day may have more rollouts than the scan budget. Directory
+    /// iteration order is unspecified, so the budget must be applied only
+    /// after sorting those files by modification time.
+    #[test]
+    fn the_newest_files_win_when_one_day_exceeds_the_budget() {
+        let fixture = Fixture::new("busy-day");
+        for index in 0..MAX_FILES_SCANNED {
+            fixture.rollout(&format!("old-{index:02}"), &[UNRELATED]);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let newest = fixture.rollout("newest", &[WITH_WINDOWS]);
+
+        let files = rollout_files(&fixture.0.join("sessions"), MAX_FILES_SCANNED);
+        assert_eq!(files.len(), MAX_FILES_SCANNED);
+        assert_eq!(files.first(), Some(&newest));
+
+        fixture
+            .provider()
+            .fetch()
+            .expect("newest rollout should be read");
     }
 
     /// Rollouts are append-only and mostly unchanged between polls; re-reading

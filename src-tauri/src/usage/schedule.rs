@@ -55,9 +55,8 @@ impl PollSchedule {
 
     /// Tell the poller the popover opened or closed.
     ///
-    /// Wakes the polling thread, which then recomputes its deadline: opening
-    /// usually makes the deadline already past, so the next poll happens
-    /// immediately.
+    /// Wakes the polling thread. A transition from closed to open forces an
+    /// immediate poll; closing merely recomputes the longer idle deadline.
     pub fn set_popover_open(&self, open: bool) {
         let mut state = self
             .popover_open
@@ -97,12 +96,18 @@ impl PollSchedule {
                 return; // already due
             };
 
+            let was_open = *state;
             let (guard, result) = self
                 .changed
                 .wait_timeout(state, remaining)
                 .unwrap_or_else(|e| e.into_inner());
             state = guard;
 
+            // The person has just opened the panel to look at the numbers.
+            // Do not make them wait out whatever remains of ACTIVE_INTERVAL.
+            if !was_open && *state {
+                return;
+            }
             if result.timed_out() {
                 return;
             }
@@ -169,15 +174,15 @@ mod tests {
             })
         };
 
-        // Well inside the idle interval, and past the active one, so the new
-        // deadline is already in the past and the wait should end at once.
-        std::thread::sleep(ACTIVE + Duration::from_millis(20));
+        // Open well before even the active interval elapses. This transition
+        // itself must force the read rather than merely shorten the deadline.
+        std::thread::sleep(Duration::from_millis(10));
         s.set_popover_open(true);
 
         let elapsed = waiter.join().expect("waiter panicked");
         assert!(
-            elapsed < IDLE,
-            "did not wake on open, waited {elapsed:?} of {IDLE:?}"
+            elapsed < ACTIVE,
+            "did not poll immediately on open, waited {elapsed:?}"
         );
     }
 

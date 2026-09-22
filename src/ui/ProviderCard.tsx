@@ -122,10 +122,11 @@ export function ProviderCard({ snapshot, now, account }: Props) {
  * `null` for a fresh reading: normal is unmarked.
  */
 function caveatFor(snapshot: ProviderSnapshot): string | null {
-  const name = PROVIDER_LABEL[snapshot.provider];
   switch (snapshot.status) {
     case "expired":
-      return `${name}를 한 번 실행하면 다시 연결됩니다.`;
+      return snapshot.provider === "claude"
+        ? "Claude Code를 실행해 다시 로그인해 주세요."
+        : "codex login으로 다시 로그인해 주세요.";
     case "stale":
       return "최신 값을 읽지 못했습니다. 계속 확인 중입니다.";
     default:
@@ -145,10 +146,14 @@ function noteFor(snapshot: ProviderSnapshot): string {
   const name = PROVIDER_LABEL[snapshot.provider];
 
   if (snapshot.status === "notInstalled") {
-    return `${name}를 쓰면 여기에 함께 표시됩니다.`;
+    return snapshot.provider === "claude"
+      ? "Claude Code에서 /login으로 로그인하면 한도를 표시합니다."
+      : "Codex CLI를 설치하고 codex login으로 로그인해 주세요.";
   }
   if (snapshot.status === "expired") {
-    return `${name}를 한 번 실행하면 다시 연결됩니다.`;
+    return snapshot.provider === "claude"
+      ? "Claude Code를 실행해 다시 로그인해 주세요."
+      : "codex login으로 다시 로그인해 주세요.";
   }
 
   switch (snapshot.errorReason) {
@@ -157,11 +162,15 @@ function noteFor(snapshot: ProviderSnapshot): string {
       // useless advice here, which is why this is its own case.
       return `${name} 계정에 표시할 한도가 없습니다.`;
     case "noData":
-      return `아직 기록된 한도가 없습니다. ${name}를 한 번 실행하면 기록됩니다.`;
+      return snapshot.provider === "codex"
+        ? "실시간 조회에 실패했고 저장된 기록도 없습니다. codex login 상태를 확인해 주세요."
+        : `아직 기록된 한도가 없습니다. ${name}를 한 번 실행하면 기록됩니다.`;
     case "windowReset":
       // The number we had described a period that has since ended. Showing it
       // dimmed would be a confident lie, so we show nothing and say why.
-      return `마지막 기록이 만료됐습니다. ${name}를 한 번 실행하면 갱신됩니다.`;
+      return snapshot.provider === "codex"
+        ? "실시간 조회에 실패했고 마지막 기록도 만료됐습니다. codex login 상태를 확인해 주세요."
+        : `마지막 기록이 만료됐습니다. ${name}를 한 번 실행하면 갱신됩니다.`;
     case "locked":
       // Not a retry problem. Saying "trying again shortly" would be a promise
       // the app cannot keep while nobody is at the machine.
