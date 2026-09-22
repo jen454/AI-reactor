@@ -86,6 +86,10 @@ jobs:
           echo "dir=$PWD" >> "$GITHUB_OUTPUT"
 
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        # GitHub does not provide attestations for user-owned private repos.
+        # Checksums are still attached below; attestation resumes automatically
+        # if the repository is made public later.
+        if: ${{ !github.event.repository.private }}
         with:
           subject-path: ${{ steps.sums.outputs.dir }}/*.dmg
 

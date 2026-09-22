@@ -43,7 +43,7 @@ Claude나 Codex 중 하나만 사용해도 됩니다. 사용하지 않는 서비
 **AI reactor는 반드시 이 저장소의 [Releases](https://github.com/jen454/AI-reactor/releases) 페이지에서만 다운로드하세요.** 이 앱에는 Claude 로그인 정보에 접근할 권한을 부여하게 됩니다. 또한 Apple Developer ID로 서명되지 않았기 때문에 macOS만으로는 누가 앱을 만들었는지 확인할 수 없습니다. 따라서 직접 검증하는 것이 좋습니다.
 
 ```sh
-# 이 저장소의 소스 코드로 GitHub Actions에서 빌드됐는지 확인
+# 공개 저장소인 경우, 이 저장소의 소스 코드로 GitHub Actions에서 빌드됐는지 확인
 gh attestation verify "AI.reactor_0.2.0_universal.dmg" -R jen454/AI-reactor
 
 # 또는 같은 릴리스의 SHA256SUMS.txt와 해시 비교
