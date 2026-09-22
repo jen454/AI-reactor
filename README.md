@@ -44,10 +44,10 @@ Claude나 Codex 중 하나만 사용해도 됩니다. 사용하지 않는 서비
 
 ```sh
 # 공개 저장소인 경우, 이 저장소의 소스 코드로 GitHub Actions에서 빌드됐는지 확인
-gh attestation verify "AI.reactor_0.2.1_universal.dmg" -R jen454/AI-reactor
+gh attestation verify "AI.reactor_0.2.2_universal.dmg" -R jen454/AI-reactor
 
 # 또는 같은 릴리스의 SHA256SUMS.txt와 해시 비교
-shasum -a 256 "AI.reactor_0.2.1_universal.dmg"
+shasum -a 256 "AI.reactor_0.2.2_universal.dmg"
 ```
 
 ## 최초 실행

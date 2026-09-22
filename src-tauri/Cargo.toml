@@ -1,6 +1,6 @@
 [package]
 name = "ai-reactor"
-version = "0.2.1"
+version = "0.2.2"
 description = "Claude and Codex usage limits as gauges in the macOS menu bar"
 authors = ["jinwook"]
 license = "MIT"
