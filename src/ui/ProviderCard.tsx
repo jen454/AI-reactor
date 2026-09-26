@@ -124,14 +124,27 @@ export function ProviderCard({ snapshot, now, account }: Props) {
 function caveatFor(snapshot: ProviderSnapshot): string | null {
   switch (snapshot.status) {
     case "expired":
-      return snapshot.provider === "claude"
-        ? "Claude Code를 실행해 다시 로그인해 주세요."
-        : "codex login으로 다시 로그인해 주세요.";
+      return expiredNote(snapshot.provider);
     case "stale":
       return "최신 값을 읽지 못했습니다. 계속 확인 중입니다.";
     default:
       return null;
   }
+}
+
+/**
+ * What to say when the stored token has aged out.
+ *
+ * This is not a logout. The CLI owns the token and refreshes it as it works;
+ * we only ever read it. So the token goes stale exactly when nobody has used
+ * the CLI for a while — and the fix is to use it once, not to sign in again.
+ * Saying "log in again" sent people looking for a session they never lost
+ * (seen in the wild: a card stuck like this for two and a half days).
+ */
+function expiredNote(provider: ProviderSnapshot["provider"]): string {
+  return provider === "claude"
+    ? "Claude Code를 한 번 실행하면 다시 읽습니다. 로그인은 그대로입니다."
+    : "codex를 한 번 실행하면 다시 읽습니다. 로그인은 그대로입니다.";
 }
 
 /**
@@ -151,9 +164,7 @@ function noteFor(snapshot: ProviderSnapshot): string {
       : "Codex CLI를 설치하고 codex login으로 로그인해 주세요.";
   }
   if (snapshot.status === "expired") {
-    return snapshot.provider === "claude"
-      ? "Claude Code를 실행해 다시 로그인해 주세요."
-      : "codex login으로 다시 로그인해 주세요.";
+    return expiredNote(snapshot.provider);
   }
 
   switch (snapshot.errorReason) {
