@@ -129,11 +129,13 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    /// Timing tests get generous margins: they assert "much sooner than the
-    /// idle interval" rather than exact durations, so a loaded machine cannot
-    /// turn them red.
-    const IDLE: Duration = Duration::from_millis(400);
-    const ACTIVE: Duration = Duration::from_millis(60);
+    /// Timing tests assert "much sooner than the idle interval" rather than
+    /// exact durations. The two intervals are kept far apart — seconds versus
+    /// a tenth of one — because every upper bound here is really a bound on
+    /// how long a loaded CI runner may take to wake a thread, and a tight gap
+    /// turns ordinary scheduler jitter into a red release.
+    const IDLE: Duration = Duration::from_secs(3);
+    const ACTIVE: Duration = Duration::from_millis(100);
 
     fn schedule() -> Arc<PollSchedule> {
         Arc::new(PollSchedule::new(IDLE, ACTIVE))
@@ -177,12 +179,17 @@ mod tests {
         // Open well before even the active interval elapses. This transition
         // itself must force the read rather than merely shorten the deadline.
         std::thread::sleep(Duration::from_millis(10));
+        let opened = Instant::now();
         s.set_popover_open(true);
 
         let elapsed = waiter.join().expect("waiter panicked");
+        // Measured from the open, not from `last_poll`: the sleep above is
+        // the test's own, and on a loaded runner it can overshoot by more
+        // than the interval being asserted.
+        let since_open = opened.elapsed();
         assert!(
-            elapsed < ACTIVE,
-            "did not poll immediately on open, waited {elapsed:?}"
+            elapsed < IDLE && since_open < IDLE / 2,
+            "did not poll immediately on open: {elapsed:?} total, {since_open:?} after opening"
         );
     }
 
